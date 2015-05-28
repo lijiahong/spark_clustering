@@ -4,19 +4,21 @@
 # use scipy.sparse
 
 import os
+import sys
 import math
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.base import issparse
 from operator import add
+sys.path.append('../')
 from utils import local2mfs, now
 from load_data import load_data_from_mongo, cut_words_local
+from config import CLUSTER_NUM, CLUSTERING_ITER, INITIAL_ITER, RB_ITER, convergeDist, FILTER_SCALE
 from pyspark import SparkContext
 from pyspark.mllib.linalg import Vectors
-from config import CLUSTER_NUM, CLUSTERING_ITER, INITIAL_ITER, RB_ITER, convergeDist, FILTER_SCALE
 
 K = 2
-AB_PATH = os.path.dirname(os.path.abspath(__file__))
+# AB_PATH = os.path.dirname(os.path.abspath(__file__))
 # print AB_PATH
 
 
@@ -273,8 +275,8 @@ if __name__ == '__main__':
 
     # topic = "APEC-微博"
     # print topic
-    input_file = "data/source_chaijing.txt"
-    output_file = "data/out_chaijing2.txt"
+    input_file = "../data/source_chaijing.txt"
+    output_file = "../data/out_chaijing2.txt"
     result_file = "results/result_chaijing.txt"
     print "step1", now()
     # load_data_from_mongo(topic, input_file)
