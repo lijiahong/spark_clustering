@@ -13,16 +13,12 @@ from utils import local2mfs, now
 from load_data import load_data_from_mongo, cut_words_local
 from pyspark import SparkContext
 from pyspark.mllib.linalg import Vectors
+from config import CLUSTER_NUM, CLUSTERING_ITER, INITIAL_ITER, RB_ITER, convergeDist, FILTER_SCALE
 
+K = 2
 AB_PATH = os.path.dirname(os.path.abspath(__file__))
 # print AB_PATH
 
-K = 2
-convergeDist = 0.01
-RB_ITER = 1
-INITIAL_ITER = 10
-CLUSTERING_ITER = 10
-CLUSTER_NUM = 5 + 1
 
 def parseKV(line):
     tid, leng, term = line.split('\t')
@@ -107,7 +103,8 @@ def cal_cluster_variance(doc_vec):
             lambda x:cosine_dist(x, center, vector_length(x), center_length)).values().sum()
     return initial_distance
 
-def load_cut_to_rdd(input_file, result_file):
+def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=CLUSTERING_ITER,\
+        ini_iter=INITIAL_ITER, rb_iter=RB_ITER, con_dist=convergeDist, filter_scale=FILTER_SCALE):
     sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.135.91:5050")
     lines = sc.textFile(input_file)
     data = lines.map(parseKV).cache()
@@ -124,9 +121,10 @@ def load_cut_to_rdd(input_file, result_file):
     print 'initial_num_term', initial_num_term
     idf_sum = initial_term_idf.values().sum()
     print 'idf_sum', idf_sum
-    idf_average = idf_sum  / (initial_num_term * 3)
+
+    idf_average = idf_sum  / (initial_num_term * filter_scale)
     term_idf = initial_term_idf.filter(
-            lambda (term, idf): idf_average < idf < (idf_average * 2)).mapValues(
+            lambda (term, idf): idf_average < idf < (idf_average * (filter_scale - 1))).mapValues(
             lambda idf: math.log(float(num_doc) / (idf+1)))
     terms_list = term_idf.keys().collect()
     num_term = len(terms_list)
@@ -145,8 +143,8 @@ def load_cut_to_rdd(input_file, result_file):
     maximum_total_variance = 0
     best_kPoints = []
     print 'initial', now()
-    for i in range(INITIAL_ITER):
-        kPoints, tempDist, iter_count = clustering(doc_vec, K, convergeDist, CLUSTERING_ITER)
+    for i in range(ini_iter):
+        kPoints, tempDist, iter_count = clustering(doc_vec, K, con_dist, clu_iter)
         # evaluation
         cluster_variance, total_variance = cluster_evaluation(doc_vec, kPoints)
 
@@ -195,7 +193,7 @@ def load_cut_to_rdd(input_file, result_file):
     updated_points_dict[total_delta_variance] = best_kPoints
 
     print 'repeated', now()
-    for j in range(2, CLUSTER_NUM):
+    for j in range(2, cluster_num+1):
         if not (total_delta_variance in updated_dict):
             print "no cluster to divide"
             break
@@ -221,9 +219,9 @@ def load_cut_to_rdd(input_file, result_file):
             maximum_total_variance = 0
             best_kPoints = []
             initial_distance = cal_cluster_variance(single_cluster)
-            for j in range(RB_ITER):
+            for j in range(rb_iter):
                 # clustering
-                kPoints, tempDist, iter_count = clustering(single_cluster, K, convergeDist, CLUSTERING_ITER)
+                kPoints, tempDist, iter_count = clustering(single_cluster, K, con_dist, clu_iter)
                 # evaluation
                 cluster_variance, total_variance = cluster_evaluation(single_cluster, kPoints)
 
@@ -259,22 +257,24 @@ def load_cut_to_rdd(input_file, result_file):
         f.write('\n')
         for (tid, feature) in per_cluster.collect():
             f.write(tid)
+            """
             for row in feature.toarray():
                 for unit in range(len(row)):
                     f.write('\t')
                     f.write(str(row[unit]))
+            """
             f.write('\n')
         f.close()
 
     sc.stop()
     return
 
+if __name__ == '__main__':
 
-if __name__ == "__main__":
     # topic = "APEC-微博"
     # print topic
     input_file = "data/source_chaijing.txt"
-    output_file = "data/out_chaijing.txt"
+    output_file = "data/out_chaijing2.txt"
     result_file = "results/result_chaijing.txt"
     print "step1", now()
     # load_data_from_mongo(topic, input_file)
