@@ -59,13 +59,14 @@ def closestPoint(p, centers, withDist=False):
 def clustering(doc_vec, K, convergeDist, iter_count_limit):
     kPoints = doc_vec.takeSample(False, K)
     points_length = [0,0]
-    tempDist = 5.0
+    tempDist = 0.0
+    convergeDist = 2.0
     iter_count = 0
     for i in range(len(kPoints)):
         kPoints[i] = list(kPoints[i])
         kPoints[i].append(vector_length(kPoints[i][1]))
 
-    while tempDist > convergeDist and iter_count < iter_count_limit:
+    while tempDist < convergeDist and iter_count < iter_count_limit:
         iter_count += 1
 
         closest = doc_vec.map(

@@ -39,10 +39,10 @@ def euclidean_dist(x, y):
 
 def closestPoint(p, centers, withDist=False):
     bestIndex = 0
-    closest = float("-inf")
+    closest = float("+inf")
     for i in range(len(centers)):
         tempDist = euclidean_dist(p, centers[i][1])
-        if tempDist > closest:
+        if tempDist < closest:
             closest = tempDist
             bestIndex = i
     if withDist == True:
@@ -131,7 +131,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
             lambda x: x / num_doc).values().reduce(add)
 
     # initial 2-way clustering
-    maximum_total_variance = 0
+    maximum_total_variance = float('+inf')
     best_kPoints = []
     print 'initial', now()
     for i in range(ini_iter):
@@ -140,7 +140,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
         cluster_variance, total_variance = cluster_evaluation(doc_vec, kPoints)
 
         # choose the best initial cluster
-        if total_variance[0] > maximum_total_variance:
+        if total_variance[0] < maximum_total_variance:
             maximum_total_variance = total_variance[0]
             best_kPoints = kPoints
     global_distance = sum(euclidean_dist(best_kPoints[x][1], global_center) for x in range(len(best_kPoints)))
@@ -207,7 +207,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
             single_cluster = closest.filter(lambda (index, (tid, feature)): index == i).values().cache()
             print 'count', i, single_cluster.count()
 
-            maximum_total_variance = 0
+            maximum_total_variance = float('+inf')
             best_kPoints = []
             initial_distance = cal_cluster_variance(single_cluster)
             for j in range(rb_iter):
@@ -216,11 +216,11 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
                 # evaluation
                 cluster_variance, total_variance = cluster_evaluation(single_cluster, kPoints)
 
-                if total_variance[0] > maximum_total_variance:
+                if total_variance[0] < maximum_total_variance:
                     maximum_total_variance = total_variance[0]
                     best_kPoints = kPoints
 
-            improvement = maximum_total_variance - initial_distance
+            improvement = initial_distance - maximum_total_variance
             updated_dict[improvement] = single_cluster  # update dict
             updated_points_dict[improvement] = best_kPoints
             print 'improvement', improvement, maximum_total_variance, initial_distance
