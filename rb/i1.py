@@ -209,6 +209,10 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
             print "no cluster to divide"
             break
 
+        if total_delta_variance < 0:
+            print "no improvement"
+            break
+
         print 'cluster to divide', total_delta_variance, updated_dict[total_delta_variance]
         best_cluster = updated_dict[total_delta_variance]
         global_best_kPoints = updated_points_dict[total_delta_variance]
