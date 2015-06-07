@@ -85,6 +85,7 @@ def clustering(doc_vec, K, convergeDist, iter_count_limit):
 
 def cluster_evaluation(doc_vec, kPoints):
 
+    size = doc_vec.count()
     closest = doc_vec.map(
             lambda (tid, feature):(closestPoint(feature, kPoints, True), (tid, feature, 1)))
     doc_variance = closest.map(
