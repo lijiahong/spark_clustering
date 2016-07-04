@@ -2,11 +2,11 @@
 
 # cluster parameter
 convergeDist = 0.01
-RB_ITER = 1
-INITIAL_ITER = 10
-CLUSTERING_ITER = 10
-CLUSTER_NUM = 5
-FILTER_SCALE = 3
+RB_ITER = 2
+INITIAL_ITER = 2
+CLUSTERING_ITER = 2
+CLUSTER_NUM = 20
+FILTER_SCALE = 5
 
 
 # database

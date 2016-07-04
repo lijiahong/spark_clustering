@@ -34,6 +34,7 @@ def load_data_from_mongo(topic, input_file):
 def cut_words_local(input_file, output_file):
     tmp_file = open(input_file,"r")
     f = open(output_file,"w")
+    count = 0
     for line in tmp_file.readlines():
         try:
             tid, text = line.split('\t')
@@ -51,6 +52,9 @@ def cut_words_local(input_file, output_file):
             f.write(tid+"\t"+str(leng)+"\t"+term+"\n")
             # f.write("\t"+term)
         # f.write("\n")
+        count += 1
+        if count == 100000:
+            break
     f.close()
     tmp_file.close()
     return

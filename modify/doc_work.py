@@ -22,8 +22,11 @@ K = 2
 
 
 def parseKV(line):
-    tid, leng, term = line.split('\t')
-    return ((tid, term), 1.0 / float(leng))
+    tid, words_list = line.split('\t')
+    words = words_list.split(' ')
+    leng = len(words)
+    for word in words:
+        yield ((tid, word), 1.0 / float(leng))
 
 def vector_length(x):
     dot_vec = x.dot(x.transpose())
@@ -109,7 +112,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
         ini_iter=INITIAL_ITER, rb_iter=RB_ITER, con_dist=convergeDist, filter_scale=FILTER_SCALE):
     sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.134.211:5050")
     lines = sc.textFile(input_file)
-    data = lines.map(parseKV).cache()
+    data = lines.flatMap(parseKV).cache()
 
     doc_term_tf = data.reduceByKey(add).cache()
     initial_num_doc = doc_term_tf.map(lambda ((tid, term), tf): tid).distinct().count()
@@ -170,7 +173,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
     print >> f, "%0.9f" % tempDist
     print >> f, "total_variance", total_variance[0], total_variance[1]
     print >> f, "global_dist", global_distance
-    f.write("center:"+type(global_center)+"\n")
+    f.write("center:"+str(type(global_center))+"\n")
     for dim in global_center:
         f.write(str(dim)+"\t")
     f.write("\n")
@@ -194,8 +197,8 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
     updated_dict = {}
     updated_points_dict = {}
     total_delta_variance = 0
-    updated_dict[total_delta_variance] = doc_vec
-    updated_points_dict[total_delta_variance] = best_kPoints
+    updated_dict[total_delta_variance] = [doc_vec]
+    updated_points_dict[total_delta_variance] = [best_kPoints]
 
     print 'repeated', now()
     for j in range(2, cluster_num+1):
@@ -203,11 +206,16 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
             print "no cluster to divide"
             break
 
-        print 'cluster to divide', total_delta_variance, updated_dict[total_delta_variance]
-        best_cluster = updated_dict[total_delta_variance]
-        global_best_kPoints = updated_points_dict[total_delta_variance]
-        del updated_dict[total_delta_variance]
-        del updated_points_dict[total_delta_variance]
+        best_cluster = updated_dict[total_delta_variance][0]
+        global_best_kPoints = updated_points_dict[total_delta_variance][0]
+        del updated_dict[total_delta_variance][0]
+        del updated_points_dict[total_delta_variance][0]
+        if len(updated_dict[total_delta_variance]) == 0:
+            del updated_dict[total_delta_variance]
+            del updated_points_dict[total_delta_variance]
+
+        print 'cluster to divide', total_delta_variance, best_cluster
+
         closest = best_cluster.map(
                 lambda (tid, feature):(closestPoint(feature, global_best_kPoints), (tid, feature))).cache()
         print 'total_count', closest.count()
@@ -235,56 +243,59 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
                     best_kPoints = kPoints
 
             improvement = maximum_total_variance - initial_distance
-            updated_dict[improvement] = single_cluster  # update dict
-            updated_points_dict[improvement] = best_kPoints
+            if improvement in updated_dict:
+                updated_dict[improvement].append(single_cluster)
+                updated_points_dict[improvement].append(best_kPoints)
+            else:
+                updated_dict[improvement] = [single_cluster]  # update dict
+                updated_points_dict[improvement] = [best_kPoints]
             print 'improvement', improvement, maximum_total_variance, initial_distance
 
             if improvement > total_delta_variance:
                 total_delta_variance = improvement
-                print 'length', cluster_variance.count()
+                #print 'length', cluster_variance.count()
 
     count = 0
+    fi = open('results/class', 'w')
     for key in updated_dict:
-        count += 1
-        print 'key', key
-        per_cluster = updated_dict[key]
+        for i in range(len(updated_dict[key])):
+            count += 1
+            print 'key, i', key, i
+            per_cluster = updated_dict[key][i]
 
-        total_similarity = cal_cluster_variance(per_cluster)
-        f = open('results/cluster_'+str(count), 'w')
-        print >> f, key, total_similarity
+            total_similarity = cal_cluster_variance(per_cluster)
+            f = open('results/cluster_'+str(count), 'w')
+            print >> f, key, total_similarity
 
-        results_list = per_cluster.values().reduce(add).toarray()
-        for row in results_list:
-            for index in range(len(row)):
-                value = row[index]
-                if value != 0:
-                    f.write('('+str(index)+','+str(value)+')\t')
-        f.write('\n')
-        for (tid, feature) in per_cluster.collect():
-            f.write(tid)
-            for row in feature.toarray():
-                for unit in range(len(row)):
-                    f.write('\t')
-                    f.write(str(row[unit]))
+            results_list = per_cluster.values().reduce(add).toarray()
+            for row in results_list:
+                for index in range(len(row)):
+                    value = row[index]
+                    if value != 0:
+                        f.write('('+str(index)+','+str(value)+')\t')
             f.write('\n')
-        f.close()
+            for (tid, feature) in per_cluster.collect():
+                f.write(tid+'\t'+str(count)+'\n')
+                fi.write(tid+'\t'+str(count)+'\n')
+            """
+            for (tid, feature) in per_cluster.collect():
+                f.write(tid)
+                for row in feature.toarray():
+                    for unit in range(len(row)):
+                        f.write('\t')
+                        f.write(str(row[unit]))
+                f.write('\n')
+            """
+            f.close()
+    fi.close()
 
     sc.stop()
     return
 
 if __name__ == '__main__':
 
-    # topic = "APEC-微博"
-    # print topic
-    input_file = "../data/source_chaijing.txt"
-    output_file = "../data/out_test.txt"
-    result_file = "results/result_test.txt"
-    print "step1", now()
-    # load_data_from_mongo(topic, input_file)
-
-    print "step2", now()
-    cut_words_local(input_file, output_file)
-
-    print "step3", now()
-    load_cut_to_rdd(local2mfs(output_file), result_file)
+    weibo_file = '../data/no_weibo.txt'
+    result_file = 'results/initial.txt'
+    print "start", now()
+    load_cut_to_rdd(local2mfs(weibo_file), result_file)
     print "end", now()

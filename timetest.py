@@ -74,7 +74,7 @@ def cluster_evaluation(doc_vec, kPoints):
     return cluster_variance, total_variance
 
 def load_cut_to_rdd(input_file, result_file):
-    sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.135.91:5050")
+    sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.134.211:5050")
     lines = sc.textFile(input_file)
     data = lines.map(parseKV).cache()
 
@@ -83,7 +83,9 @@ def load_cut_to_rdd(input_file, result_file):
     num_doc = doc_term_tf.map(lambda ((tid, term), tf): tid).distinct().count()
     terms_list = doc_term_tf.map(lambda ((tid, term), tf): term).distinct().collect()
     num_term = len(terms_list)
-
+    fi = open(result_file, 'w')
+    text = '%d\t%d\n' % (num_doc, num_term)
+    print >> fi, text 
     term_idf = doc_term_tf.map(
             lambda ((tid, term), tf): (term, 1.0)
             ).reduceByKey(add).mapValues(lambda idf: math.log(float(num_doc) / (idf+1)))
@@ -132,14 +134,14 @@ def load_cut_to_rdd(input_file, result_file):
             print "no cluster to divide"
             break
 
-        # print 'cluster to divide', total_delta_variance, updated_dict[total_delta_variance]
+        print 'cluster to divide', total_delta_variance, updated_dict[total_delta_variance]
         best_cluster = updated_dict[total_delta_variance][0]
         initial_variance = updated_dict[total_delta_variance][1]
 
         del updated_dict[total_delta_variance]
         closest = best_cluster.map(
                 lambda (tid, feature):(closestPoint(feature, kPoints), (tid, feature))).cache()
-        # print 'total_count', closest.count()
+        print 'total_count', closest.count()
 
         total_delta_variance = float("-inf") # clear to zero
         for key in updated_dict:
@@ -154,7 +156,7 @@ def load_cut_to_rdd(input_file, result_file):
         for i in range(K):
             print 'for', now()
             single_cluster = closest.filter(lambda (index, (tid, feature)): index == i).values().cache()
-            # print 'count', i, single_cluster.count()
+            print 'count', i, single_cluster.count()
             print 'filter', now()
 
             maximum_total_variance = 0
@@ -171,17 +173,18 @@ def load_cut_to_rdd(input_file, result_file):
 
             improvement = maximum_total_variance - initial_distance[i]
             updated_dict[improvement] = [single_cluster, updated_cluster_variance] # update dict
-            # print 'improvement', improvement, maximum_total_variance, initial_distance[i]
+            print 'improvement', improvement, maximum_total_variance, initial_distance[i]
 
             if improvement > total_delta_variance:
                 total_delta_variance = improvement
                 updated_cluster_variance = cluster_variance
-                # print 'length', cluster_variance.count()
+                print 'length', cluster_variance.count()
 
-    # for key in updated_dict:
-    #     print 'key', key
+    for key in updated_dict:
+        print 'key', key
 
     sc.stop()
+    fi.close()
     return
 
 
@@ -189,14 +192,13 @@ if __name__ == "__main__":
     topic = "APEC-微博"
     print topic
     input_file = "data/source_APEC.txt"
-    output_file = "data/out_APEC.txt"
-    result_file = "data/result_APEC.txt"
+    output_file = "data/out_test.txt"
+    result_file = "data/result_test.txt"
     print "step1", now()
     # load_data_from_mongo(topic, input_file)
 
     print "step2", now()
-    # cut_words_local(input_file, output_file)
-
+    #cut_words_local(input_file, output_file)
     print "step3", now()
     load_cut_to_rdd(local2mfs(output_file), result_file)
     print "end", now()

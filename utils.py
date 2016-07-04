@@ -11,6 +11,7 @@ from config import MONGODB_HOST, MONGODB_PORT, MONGODB_NAME, EVENTS_COLLECTION,\
 def local2mfs(input_file):
     #input_file should be absolute path
     prefix_name = '/mnt/mfs'
+    prefix_name = '/home/ubuntu6/ljh/test'
     shutil.copy(input_file, prefix_name)
 
     file_name = input_file.split('/')[-1]

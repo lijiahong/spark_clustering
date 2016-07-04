@@ -1,8 +1,5 @@
 # -*- coding:utf-8 -*-
 
-# some improvement after discussion
-# use scipy.sparse
-
 import os
 import sys
 import math
@@ -16,100 +13,62 @@ from config import CLUSTER_NUM, CLUSTERING_ITER, INITIAL_ITER, RB_ITER, converge
 from pyspark import SparkContext
 from pyspark.mllib.linalg import Vectors
 
-K = 2
-# AB_PATH = os.path.dirname(os.path.abspath(__file__))
-# print AB_PATH
+def parse(line):
+    tid, label = line.split('\t')
+    return (tid, int(label))
 
+def nmi(class_file, hashtag_file):
+    fi = open('nmi.txt', 'w')
+    sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.134.211:5050")
+    cl = sc.textFile(class_file)
+    ha = sc.textFile(hashtag_file)
+    cl_data = cl.map(parse).cache()
+    ha_data = ha.map(parse).cache()
+    cl_ha = cl_data.join(ha_data).cache()
+    total = cl_ha.count()
+    print total
+    CLASS_NUM = 20
+    parray = np.zeros([CLASS_NUM, CLASS_NUM])
+    for c in range(CLASS_NUM):
+        for h in range(CLASS_NUM):
+            pcount = cl_ha.filter(lambda (tid, (cl, ha)): cl == (c + 1) and ha == (h + 1)).count()
+            parray[c][h] = pcount * 1.0 / total
+    c_array = parray.sum(axis=1) # row
+    h_array = parray.sum(axis=0) # column
+    print c_array
+    print h_array
 
-def parseKV(line):
-    tid, leng, term = line.split('\t')
-    return ((tid, term), 1.0 / float(leng))
+    px_py = np.zeros([CLASS_NUM, CLASS_NUM])
+    for c in range(CLASS_NUM):
+        for h in range(CLASS_NUM):
+            px_py[c][h] = c_array[c] * h_array[h]
+    results = parray * np.log(parray / px_py)
+    results = np.nan_to_num(results)
+    print results
+    print >> fi, parray
+    print >> fi, px_py
+    print >> fi, results
+    mi = results.sum()
+    print mi
 
-def vector_length(x):
-    dot_vec = x.dot(x.transpose())
-    result = math.sqrt(dot_vec.data[0])
-    return result
-
-def cosine_dist(x, y, x_length, y_length):
-    result = 0.0
-    numerator = x.dot(y.transpose())
-    denominator = x_length * y_length
-    result = numerator / denominator
-    try:
-        res = result.data[0]
-    except:
-        res = 0
-    return res
-
-def closestPoint(p, centers, withDist=False):
-    bestIndex = 0
-    closest = float("-inf")
-    p_length = vector_length(p)
-    for i in range(len(centers)):
-        tempDist = cosine_dist(p, centers[i][1], p_length, centers[i][2])
-        if tempDist > closest:
-            closest = tempDist
-            bestIndex = i
-    if withDist == True:
-        return (bestIndex, closest)
-    else:
-        return  bestIndex
-
-def clustering(doc_vec, K, convergeDist, iter_count_limit):
-    kPoints = doc_vec.takeSample(False, K)
-    points_length = [0,0]
-    tempDist = 0.0
-    convergeDist = 2.0
-    iter_count = 0
-    for i in range(len(kPoints)):
-        kPoints[i] = list(kPoints[i])
-        kPoints[i].append(vector_length(kPoints[i][1]))
-
-    while tempDist < convergeDist and iter_count < iter_count_limit:
-        iter_count += 1
-
-        closest = doc_vec.map(
-                lambda (tid, feature):(closestPoint(feature, kPoints), (tid, feature, 1)))
-        pointState = closest.reduceByKey(
-                lambda (x1, y1, z1), (x2, y2, z2): (-1, y1 + y2, z1 + z2))
-        newPoints = pointState.map(
-                lambda (x, (flag, y, z)): (x, y / z)).map(
-                lambda (x, y): (x, y, vector_length(y))).collect()
-
-        tempDist = sum(cosine_dist(kPoints[x][1], y, kPoints[x][2], z) for (x, y, z) in newPoints)
-        for (x, y, z) in newPoints:
-            kPoints[x][1] = y
-            kPoints[x][2] = z
-    return kPoints, tempDist, iter_count
-
-def cluster_evaluation(doc_vec, kPoints):
-
-    closest = doc_vec.map(
-            lambda (tid, feature):(closestPoint(feature, kPoints, True), (tid, feature, 1)))
-    doc_variance = closest.map(
-            lambda ((index, dist), (tid, feature, num)): (index, (dist, num)))
-    cluster_variance = doc_variance.reduceByKey(lambda (x1,y1),(x2,y2):(x1+x2,y1+y2))
-    total_variance = cluster_variance.map(
-            lambda (index, (dist, num)): (dist, num)).reduce(lambda (x1,y1), (x2,y2):(x1+x2,y1+y2))
-
-    return cluster_variance, total_variance
-
-def cal_cluster_variance(doc_vec):
-    cluster_center = doc_vec.mapValues(
-            lambda x: (x, 1)).values().reduce(
-            lambda (y1, z1), (y2, z2): (y1 + y2, z1 + z2))
-    _sum, _num = cluster_center
-    center = _sum / _num
-    center_length = vector_length(center)
-    initial_distance = doc_vec.mapValues(
-            lambda x:cosine_dist(x, center, vector_length(x), center_length)).values().sum()
-    return initial_distance
+    logpx = c_array * np.log2(c_array)
+    logpx = np.nan_to_num(logpx)
+    hx = -logpx.sum()
+    logpy = h_array * np.log2(h_array)
+    logpy = np.nan_to_num(logpy)
+    hy = -logpy.sum()
+    nmi = 2 * mi / (hx + hy)
+    print logpx
+    print logpy
+    print hx, hy, nmi
+    fi.close()
+    sc.stop()
 
 def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=CLUSTERING_ITER,\
         ini_iter=INITIAL_ITER, rb_iter=RB_ITER, con_dist=convergeDist, filter_scale=FILTER_SCALE):
     sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.134.211:5050")
     lines = sc.textFile(input_file)
-    data = lines.map(parseKV).cache()
+    data = lines.flatMap(parseKV).cache()
 
     doc_term_tf = data.reduceByKey(add).cache()
     initial_num_doc = doc_term_tf.map(lambda ((tid, term), tf): tid).distinct().count()
@@ -158,6 +117,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
         if total_variance[0] > maximum_total_variance:
             maximum_total_variance = total_variance[0]
             best_kPoints = kPoints
+            best_kPoints = kPoints
     global_distance = sum(cosine_dist(best_kPoints[x][1], global_center, best_kPoints[x][2], g_length) for x in range(len(best_kPoints)))
 
     f = open(result_file,'w')
@@ -170,7 +130,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
     print >> f, "%0.9f" % tempDist
     print >> f, "total_variance", total_variance[0], total_variance[1]
     print >> f, "global_dist", global_distance
-    f.write("center:"+type(global_center)+"\n")
+    f.write("center:"+str(type(global_center))+"\n")
     for dim in global_center:
         f.write(str(dim)+"\t")
     f.write("\n")
@@ -194,8 +154,8 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
     updated_dict = {}
     updated_points_dict = {}
     total_delta_variance = 0
-    updated_dict[total_delta_variance] = doc_vec
-    updated_points_dict[total_delta_variance] = best_kPoints
+    updated_dict[total_delta_variance] = [doc_vec]
+    updated_points_dict[total_delta_variance] = [best_kPoints]
 
     print 'repeated', now()
     for j in range(2, cluster_num+1):
@@ -203,11 +163,16 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
             print "no cluster to divide"
             break
 
-        print 'cluster to divide', total_delta_variance, updated_dict[total_delta_variance]
-        best_cluster = updated_dict[total_delta_variance]
-        global_best_kPoints = updated_points_dict[total_delta_variance]
-        del updated_dict[total_delta_variance]
-        del updated_points_dict[total_delta_variance]
+        best_cluster = updated_dict[total_delta_variance][0]
+        global_best_kPoints = updated_points_dict[total_delta_variance][0]
+        del updated_dict[total_delta_variance][0]
+        del updated_points_dict[total_delta_variance][0]
+        if len(updated_dict[total_delta_variance]) == 0:
+            del updated_dict[total_delta_variance]
+            del updated_points_dict[total_delta_variance]
+
+        print 'cluster to divide', total_delta_variance, best_cluster
+
         closest = best_cluster.map(
                 lambda (tid, feature):(closestPoint(feature, global_best_kPoints), (tid, feature))).cache()
         print 'total_count', closest.count()
@@ -235,56 +200,58 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
                     best_kPoints = kPoints
 
             improvement = maximum_total_variance - initial_distance
-            updated_dict[improvement] = single_cluster  # update dict
-            updated_points_dict[improvement] = best_kPoints
+            if improvement in updated_dict:
+                updated_dict[improvement].append(single_cluster)
+                updated_points_dict[improvement].append(best_kPoints)
+            else:
+                updated_dict[improvement] = [single_cluster]  # update dict
             print 'improvement', improvement, maximum_total_variance, initial_distance
 
             if improvement > total_delta_variance:
                 total_delta_variance = improvement
-                print 'length', cluster_variance.count()
+                #print 'length', cluster_variance.count()
 
     count = 0
+    fi = open('results/class', 'w')
     for key in updated_dict:
-        count += 1
-        print 'key', key
-        per_cluster = updated_dict[key]
+        for i in range(len(updated_dict[key])):
+            count += 1
+            print 'key, i', key, i
+            per_cluster = updated_dict[key][i]
 
-        total_similarity = cal_cluster_variance(per_cluster)
-        f = open('results/cluster_'+str(count), 'w')
-        print >> f, key, total_similarity
+            total_similarity = cal_cluster_variance(per_cluster)
+            f = open('results/cluster_'+str(count), 'w')
+            print >> f, key, total_similarity
 
-        results_list = per_cluster.values().reduce(add).toarray()
-        for row in results_list:
-            for index in range(len(row)):
-                value = row[index]
-                if value != 0:
-                    f.write('('+str(index)+','+str(value)+')\t')
-        f.write('\n')
-        for (tid, feature) in per_cluster.collect():
-            f.write(tid)
-            for row in feature.toarray():
-                for unit in range(len(row)):
-                    f.write('\t')
-                    f.write(str(row[unit]))
+            results_list = per_cluster.values().reduce(add).toarray()
+            for row in results_list:
+                for index in range(len(row)):
+                    value = row[index]
+                    if value != 0:
+                        f.write('('+str(index)+','+str(value)+')\t')
             f.write('\n')
-        f.close()
+            for (tid, feature) in per_cluster.collect():
+                f.write(tid+'\t'+str(count)+'\n')
+                fi.write(tid+'\t'+str(count)+'\n')
+            """
+            for (tid, feature) in per_cluster.collect():
+                f.write(tid)
+                for row in feature.toarray():
+                    for unit in range(len(row)):
+                        f.write('\t')
+                        f.write(str(row[unit]))
+                f.write('\n')
+            """
+            f.close()
+    fi.close()
 
     sc.stop()
     return
 
 if __name__ == '__main__':
 
-    # topic = "APEC-微博"
-    # print topic
-    input_file = "../data/source_chaijing.txt"
-    output_file = "../data/out_test.txt"
-    result_file = "results/result_test.txt"
-    print "step1", now()
-    # load_data_from_mongo(topic, input_file)
-
-    print "step2", now()
-    cut_words_local(input_file, output_file)
-
-    print "step3", now()
-    load_cut_to_rdd(local2mfs(output_file), result_file)
+    class_file = 'results/class'
+    hashtag_file = '../data/no_hashtag.txt'
+    print "start", now()
+    nmi(class_file, hashtag_file)
     print "end", now()
