@@ -13,7 +13,7 @@ sys.path.append('../')
 from utils import local2mfs, now
 from load_data import load_data_from_mongo, cut_words_local
 from config import CLUSTER_NUM, CLUSTERING_ITER, INITIAL_ITER, RB_ITER, convergeDist, FILTER_SCALE
-from pyspark import SparkContext
+from pyspark import SparkContext, SparkConf
 from pyspark.mllib.linalg import Vectors
 
 K = 2
@@ -27,6 +27,27 @@ def parseKV(line):
     leng = len(words)
     for word in words:
         yield ((tid, word), 1.0 / float(leng))
+
+def parseWords(line):
+    tid, words_list = line.split('\t')
+    words = words_list.split(' ')
+    leng = len(words)
+    WINDOW = 10
+    min_len = min(leng, WINDOW)
+    for i in range(leng):
+        this_word = words[i]
+        yield ((this_word, this_word), 1)
+        for j in range(i+1,leng):
+            yield ((this_word, words[j]), 1)
+            yield ((words[j], this_word), 1)
+    if leng > WINDOW:
+        for i in range(WINDOW, leng):
+            this_word = words[i]
+            yield ((this_word, this_word), 1)
+            for j in range(i-WINDOW, i):
+                yield ((words[j], this_word), 1)
+                yield ((this_word, words[j]), 1)
+
 
 def vector_length(x):
     dot_vec = x.dot(x.transpose())
@@ -110,11 +131,24 @@ def cal_cluster_variance(doc_vec):
 
 def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=CLUSTERING_ITER,\
         ini_iter=INITIAL_ITER, rb_iter=RB_ITER, con_dist=convergeDist, filter_scale=FILTER_SCALE):
-    sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.134.211:5050")
+    conf = SparkConf()
+    conf = conf.set('spark.ui.port', 4041)
+    sc = SparkContext(appName='PythonKMeans',master="mesos://219.224.134.211:5050", conf=conf)
     lines = sc.textFile(input_file)
-    data = lines.flatMap(parseKV).cache()
+    words_net = lines.flatMap(parseWords).cache()
+    words_dis = words_net.reduceByKey(add).cache()
+    terms_list = words_dis.keys().map(lambda (w1,w2):w1).distinct().collect()
+    initial_num_term = len(terms_list)
+    initial_num_doc = initial_num_term
+    num_term = initial_num_term
+    num_doc = num_term
+    print 'num_term', num_term
+    index_dis = words_dis.map(lambda ((w1,w2),v):(w1, (terms_list.index(w2), v))).cache()
+    doc_vec = index_dis.groupByKey().mapValues(lambda feature : csr_matrix(Vectors.sparse(num_term, feature).toArray())).cache()
+    #count = words_net.count()
+    #print count
+    """
 
-    doc_term_tf = data.reduceByKey(add).cache()
     initial_num_doc = doc_term_tf.map(lambda ((tid, term), tf): tid).distinct().count()
     print 'initial_num_doc', initial_num_doc
 
@@ -130,10 +164,6 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
     idf_average = idf_sum  / (initial_num_term * filter_scale)
     filtered_term_idf = initial_term_idf.filter(
             lambda (term, idf): idf_average < idf < (idf_average * (filter_scale - 1))).cache()
-    terms_list = filtered_term_idf.keys().collect()
-    num_term = len(terms_list)
-    print 'num_term', num_term
-
     tfidf_join = doc_term_tf.map(
             lambda ((tid, term), tf): (term, (tid, tf))).join(filtered_term_idf)  #(term, (tid, tf), df)
     id_tfidf = tfidf_join.map(lambda (term, ((tid, tf), df)): (tid, (terms_list.index(term), tf, df))).cache()
@@ -142,12 +172,10 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
 
     tfidf = id_tfidf.mapValues(
             lambda (index, tf, df) : (index, tf * math.log(float(num_doc) / (df+1))))
-
-    doc_vec = tfidf.groupByKey().mapValues(lambda feature : csr_matrix(Vectors.sparse(num_term, feature).toArray())).cache()
+    """ 
     global_center = doc_vec.mapValues(
             lambda x: x / num_doc).values().reduce(add)
     g_length = vector_length(global_center)
-
     # initial 2-way clustering
     maximum_total_variance = 0
     best_kPoints = []
@@ -168,8 +196,8 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
     f.write(str(iter_count)+"\t"+str(num_doc)+"\t"+str(num_term)+"\n")
     for index in range(len(terms_list)):
         f.write(terms_list[index].encode('utf-8')+'\t')
-    for (term, ((tid,tf), idf)) in tfidf_join.collect():
-        f.write(term.encode('utf-8')+'\t'+str(tid)+'\t'+str(tf)+'\t'+str(idf)+'\n')
+    for ((w1, w2), v) in words_dis.collect():
+        f.write(w1.encode('utf-8')+'\t'+w2.encode('utf-8')+'\t'+str(v)+'\n')
     print >> f, "%0.9f" % tempDist
     print >> f, "total_variance", total_variance[0], total_variance[1]
     print >> f, "global_dist", global_distance
@@ -256,7 +284,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
                 #print 'length', cluster_variance.count()
 
     count = 0
-    fi = open('results/class', 'w')
+    fi = open('words_results/words_class', 'w')
     for key in updated_dict:
         for i in range(len(updated_dict[key])):
             count += 1
@@ -264,7 +292,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
             per_cluster = updated_dict[key][i]
 
             total_similarity = cal_cluster_variance(per_cluster)
-            f = open('results/cluster_'+str(count), 'w')
+            f = open('words_results/cluster_'+str(count), 'w')
             print >> f, key, total_similarity
 
             results_list = per_cluster.values().reduce(add).toarray()
@@ -275,27 +303,19 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
                         f.write('('+str(index)+','+str(value)+')\t')
             f.write('\n')
             for (tid, feature) in per_cluster.collect():
-                f.write(tid+'\t'+str(count)+'\n')
-                fi.write(tid+'\t'+str(count)+'\n')
-            """
-            for (tid, feature) in per_cluster.collect():
-                f.write(tid)
-                for row in feature.toarray():
-                    for unit in range(len(row)):
-                        f.write('\t')
-                        f.write(str(row[unit]))
-                f.write('\n')
-            """
+                f.write(tid.encode('utf-8')+'\t'+str(count)+'\n')
+                fi.write(tid.encode('utf-8')+'\t'+str(count)+'\n')
             f.close()
     fi.close()
-
+    fi = open('words_results/class', 'w')
+    fi.close()
     sc.stop()
     return
 
 if __name__ == '__main__':
 
-    weibo_file = '../data/no_weibo.txt'
-    result_file = 'results/initial.txt'
+    weibo_file = '../data/1_no_weibo.txt'
+    result_file = 'words_results/initial.txt'
     print "start", now()
     load_cut_to_rdd(local2mfs(weibo_file), result_file)
     print "end", now()

@@ -130,6 +130,7 @@ def load_cut_to_rdd(input_file, result_file, cluster_num=CLUSTER_NUM, clu_iter=C
     idf_average = idf_sum  / (initial_num_term * filter_scale)
     filtered_term_idf = initial_term_idf.filter(
             lambda (term, idf): idf_average < idf < (idf_average * (filter_scale - 1))).cache()
+    filtered_term_idf = initial_term_idf
     terms_list = filtered_term_idf.keys().collect()
     num_term = len(terms_list)
     print 'num_term', num_term
